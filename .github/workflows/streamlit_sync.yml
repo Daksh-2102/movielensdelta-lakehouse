@@ -1,0 +1,51 @@
+name: Sync KPIs from S3 to Streamlit
+
+on:
+  # This allows you to trigger the workflow manually from the GitHub Actions UI
+  workflow_dispatch:
+  
+  # Optional: Schedule sync every day at 12:00 PM UTC
+  schedule:
+    - cron: '0 12 * * *'
+
+jobs:
+  sync_data:
+    runs-on: ubuntu-latest
+    
+    # We need contents:write permission to push commits back to the repo
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Run S3 Data Sync
+        env:
+          # These map to your GitHub Repository Secrets
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION }} 
+        run: |
+          aws s3 sync s3://movielens-data-store/analytics/ dashboard/data/ --exclude "*" --include "*.parquet" --delete
+          
+          # Write a simple manifest for health check
+          echo "{\"status\": \"success\", \"last_sync\": \"$(date -u +'%Y-%m-%dT%H:%M:%SZ')\"}" > dashboard/data/.sync_manifest.json
+
+      - name: Commit and Push Changes if Any
+        run: |
+          # Configure Git as a GitHub Actions bot
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          
+          # Add the data directory
+          git add dashboard/data/
+          
+          # Check if there are actual changes
+          if ! git diff-index --quiet HEAD; then
+            git commit -m "chore(data): auto-sync KPI parquet files from S3"
+            git push
+            echo "Successfully synced and pushed new data."
+          else
+            echo "No changes in data. Skipping push."
+          fi
